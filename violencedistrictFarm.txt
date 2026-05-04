@@ -1,0 +1,206 @@
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local WHITELIST = {
+    ["TaketheLbozoL"] = true,
+    ["nvyEgo"] = true,
+    ["kakagpla"] = true,
+    ["mielsfangirl"] = true,
+    ["MelonzXey"] = true,
+    ["OBITdisini12"] = true,
+}
+
+print("[Whitelist] Conta detectada: " .. LocalPlayer.Name)
+
+if not WHITELIST[LocalPlayer.Name] then
+    print("[Whitelist] Acesso negado para: " .. LocalPlayer.Name)
+    LocalPlayer:Kick("Acesso negado.")
+    error("", 0)
+end
+
+print("[Whitelist] Acesso liberado para: " .. LocalPlayer.Name .. " — carregando AutoFarm...")
+
+local Teams = game:GetService("Teams")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local VirtualUser = game:GetService("VirtualUser")
+
+local Camera = workspace.CurrentCamera
+
+local spectatorCount = 0
+local lastTeam = nil
+local running = true
+local survivorLoop = nil
+local isHopping = false
+
+local function getTeamName()
+    local team = LocalPlayer.Team
+    if not team then return nil end
+    return team.Name
+end
+
+local function doServerHop()
+    if isHopping then return end
+    isHopping = true
+    spectatorCount = 0
+
+    task.spawn(function()
+        while running do
+            local success, result = pcall(function()
+                return game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100")
+            end)
+
+            if not success then
+                print("[AutoFarm] Erro ao buscar servidores, tentando novamente em 5s...")
+                task.wait(5)
+                continue
+            end
+
+            local data
+            local decodeOk = pcall(function()
+                data = HttpService:JSONDecode(result)
+            end)
+
+            if not decodeOk or not data or not data.data then
+                print("[AutoFarm] Erro ao decodificar resposta, tentando novamente em 5s...")
+                task.wait(5)
+                continue
+            end
+
+            local servers = {}
+            for _, server in pairs(data.data) do
+                if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                    table.insert(servers, server.id)
+                end
+            end
+
+            if #servers == 0 then
+                print("[AutoFarm] Nenhum servidor disponível, tentando novamente em 10s...")
+                task.wait(10)
+                continue
+            end
+
+            local picked = servers[math.random(1, #servers)]
+            local teleportOk, teleportErr = pcall(function()
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, picked, LocalPlayer)
+            end)
+
+            if not teleportOk then
+                print("[AutoFarm] Falha no teleporte: " .. tostring(teleportErr) .. ", tentando outro servidor em 5s...")
+                task.wait(5)
+                continue
+            end
+
+            print("[AutoFarm] Teleporte enviado, aguardando...")
+            task.wait(15)
+            print("[AutoFarm] Teleporte demorou, tentando outro servidor...")
+        end
+
+        isHopping = false
+    end)
+end
+
+local function checkPlayerCount()
+    return #Players:GetPlayers() <= 2
+end
+
+local function getFinishline()
+    local map = workspace:WaitForChild("Map", 10)
+    if not map then return nil end
+    local finish = map:FindFirstChild("Fininshline")
+    if not finish then
+        finish = map:WaitForChild("Fininshline", 10)
+    end
+    return finish
+end
+
+local function startSurvivorFarm()
+    if survivorLoop then return end
+    survivorLoop = task.spawn(function()
+        while running and getTeamName() == "Survivors" do
+            pcall(function()
+                local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+                local hrp = char:WaitForChild("HumanoidRootPart", 10)
+                local finishline = getFinishline()
+                if hrp and finishline and finishline.Parent then
+                    print("[AutoFarm] Aguardando 25s para dar firetouchinterest...")
+                    task.wait(25)
+                    print("[AutoFarm] Dando firetouchinterest na finishline!")
+                    firetouchinterest(hrp, finishline, 0)
+                    task.wait(0.2)
+                    firetouchinterest(hrp, finishline, 1)
+                end
+            end)
+            task.wait(1)
+        end
+        survivorLoop = nil
+    end)
+end
+
+task.spawn(function()
+    while running do
+        local currentTeam = getTeamName()
+
+        if currentTeam ~= lastTeam then
+            print("[AutoFarm] Time mudou: " .. tostring(lastTeam) .. " -> " .. tostring(currentTeam))
+
+            if currentTeam == "Killer" then
+                spectatorCount = 0
+                survivorLoop = nil
+                isHopping = false
+                print("[AutoFarm] Virei Killer, trocando servidor...")
+                doServerHop()
+
+            elseif currentTeam == "Survivors" then
+                isHopping = false
+                print("[AutoFarm] Virei Survivor (Spectator Count: " .. spectatorCount .. "), iniciando farm...")
+                startSurvivorFarm()
+
+            elseif currentTeam == "Spectator" then
+                survivorLoop = nil
+                spectatorCount = spectatorCount + 1
+                print("[AutoFarm] Virei Spectator #" .. spectatorCount)
+                if spectatorCount >= 2 then
+                    print("[AutoFarm] Spectator 2x, trocando servidor...")
+                    doServerHop()
+                end
+            end
+
+            lastTeam = currentTeam
+        end
+
+        task.wait(0.5)
+    end
+end)
+
+task.spawn(function()
+    while running do
+        pcall(function()
+            Camera = workspace.CurrentCamera
+            if Camera then
+                local size = Camera.ViewportSize
+                local x = size.X / 2
+                local y = size.Y / 2
+                VirtualUser:Button1Down(Vector2.new(x, y), Camera.CFrame)
+                task.wait(0.1)
+                VirtualUser:Button1Up(Vector2.new(x, y), Camera.CFrame)
+            end
+        end)
+        task.wait(10)
+    end
+end)
+
+task.spawn(function()
+    while running do
+        if checkPlayerCount() and not isHopping then
+            print("[AutoFarm] Servidor com poucos jogadores, trocando...")
+            doServerHop()
+            task.wait(5)
+        end
+        task.wait(3)
+    end
+end)
+
+print("[AutoFarm] AutoFarm + Anti AFK iniciado!")
+print("[AutoFarm] Spectator count acumula entre Survivor/Spectator!")
+print("[AutoFarm] So reseta no Killer ou Server Hop!")
